@@ -7,11 +7,13 @@ Python-side AI actions (optional when using Copilot Cloud).
 from __future__ import annotations
 
 import os
+import csv
 from typing import Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from pathlib import Path
 
 from copilotkit.integrations.fastapi import add_fastapi_endpoint
 from copilotkit import CopilotKitRemoteEndpoint, Action as CopilotAction
@@ -19,6 +21,7 @@ from copilotkit import CopilotKitRemoteEndpoint, Action as CopilotAction
 load_dotenv()
 
 app = FastAPI(title="TaskFlow AI Backend", version="1.0.0")
+CSV_FILE = Path(__file__).parent / "tickets.csv"
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
 app.add_middleware(
@@ -37,11 +40,57 @@ class Todo(BaseModel):
     priority: str = "medium"
 
 
-todos: list[dict] = [
-    {"id": 1, "text": "Buy groceries", "done": False, "priority": "medium"},
-    {"id": 2, "text": "Read a book", "done": False, "priority": "low"},
-    {"id": 3, "text": "Exercise for 30 minutes", "done": True, "priority": "high"},
-]
+# ── CSV Persistence Functions ────────────────────────────────────────────────
+def load_todos_from_csv() -> list[dict]:
+    """Load todos from CSV file."""
+    if not CSV_FILE.exists():
+        return []
+    
+    todos = []
+    try:
+        with open(CSV_FILE, 'r', newline='') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row:  # Skip empty rows
+                    todos.append({
+                        "id": int(row["id"]),
+                        "text": row["text"],
+                        "done": row["done"].lower() == "true",
+                        "priority": row["priority"],
+                    })
+    except Exception as e:
+        print(f"⚠️  Error loading CSV: {e}")
+    
+    return todos
+
+
+def save_todos_to_csv(todos: list[dict]):
+    """Save todos to CSV file."""
+    try:
+        with open(CSV_FILE, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=["id", "text", "done", "priority"])
+            writer.writeheader()
+            for todo in todos:
+                writer.writerow({
+                    "id": todo["id"],
+                    "text": todo["text"],
+                    "done": str(todo["done"]),
+                    "priority": todo["priority"],
+                })
+        print(f"✅ Saved {len(todos)} todos to {CSV_FILE}")
+    except Exception as e:
+        print(f"❌ Error saving CSV: {e}")
+
+
+# ── Initialize todos from CSV, or use defaults if empty ──────────────────────
+todos: list[dict] = load_todos_from_csv()
+if not todos:
+    todos = [
+        {"id": 1, "text": "Buy groceries", "done": False, "priority": "medium"},
+        {"id": 2, "text": "Read a book", "done": False, "priority": "low"},
+        {"id": 3, "text": "Exercise for 30 minutes", "done": True, "priority": "high"},
+    ]
+    save_todos_to_csv(todos)
 
 # ── REST API endpoints ────────────────────────────────────────────────────────
 
@@ -53,6 +102,7 @@ async def get_todos():
 @app.post("/todos")
 async def create_todo(todo: Todo):
     todos.append(todo.model_dump())
+    save_todos_to_csv(todos)
     return todo
 
 
@@ -61,6 +111,7 @@ async def update_todo(todo_id: int, updates: dict):
     for t in todos:
         if t["id"] == todo_id:
             t.update(updates)
+            save_todos_to_csv(todos)
             return t
     return {"error": "not found"}, 404
 
@@ -69,6 +120,7 @@ async def update_todo(todo_id: int, updates: dict):
 async def delete_todo(todo_id: int):
     global todos
     todos = [t for t in todos if t["id"] != todo_id]
+    save_todos_to_csv(todos)
     return {"deleted": todo_id}
 
 
@@ -81,6 +133,7 @@ async def action_add_todo(text: str, priority: Optional[str] = "medium"):
     new_id = int(time.time() * 1000) % 1_000_000
     new_todo = {"id": new_id, "text": text, "done": False, "priority": priority}
     todos.append(new_todo)
+    save_todos_to_csv(todos)
     return f'Added todo: "{text}" with {priority} priority (id={new_id})'
 
 
@@ -89,6 +142,7 @@ async def action_complete_todo(id: int, done: bool):
     for t in todos:
         if t["id"] == id:
             t["done"] = done
+            save_todos_to_csv(todos)
             return f'Marked todo #{id} as {"done" if done else "undone"}'
     return f"Todo #{id} not found"
 
@@ -99,6 +153,7 @@ async def action_delete_todo(id: int):
     before = len(todos)
     todos = [t for t in todos if t["id"] != id]
     if len(todos) < before:
+        save_todos_to_csv(todos)
         return f"Deleted todo #{id}"
     return f"Todo #{id} not found"
 
@@ -108,6 +163,7 @@ async def action_clear_completed():
     global todos
     count = sum(1 for t in todos if t["done"])
     todos = [t for t in todos if not t["done"]]
+    save_todos_to_csv(todos)
     return f"Cleared {count} completed todo(s)"
 
 

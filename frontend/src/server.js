@@ -39,6 +39,7 @@ function createAdapter() {
     return new OpenAIAdapter({
       model: "gpt-4o-mini",
       // apiKey is auto-read from OPENAI_API_KEY env var
+      allowSystemInMessages: false,
     });
   } catch (err) {
     throw new Error(

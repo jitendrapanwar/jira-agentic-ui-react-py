@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { CopilotKit } from "@copilotkit/react-core";
 import { CopilotSidebar } from "@copilotkit/react-ui";
 import { useCopilotReadable, useCopilotAction } from "@copilotkit/react-core";
@@ -9,6 +9,7 @@ import "./App.css";
 // Priority: Cloud key > Node runtime URL > error
 const CLOUD_KEY = import.meta.env.VITE_COPILOT_CLOUD_API_KEY;
 const RUNTIME_URL = "http://localhost:4000/copilotkit";
+const BACKEND_API = "http://localhost:8000";
 
 const copilotProps = CLOUD_KEY
   ? { publicApiKey: CLOUD_KEY }
@@ -16,13 +17,30 @@ const copilotProps = CLOUD_KEY
 
 // ─── Todo App Inner Component ─────────────────────────────────────────────────
 function TodoApp() {
-  const [todos, setTodos] = useState([
-    { id: 1, text: "Buy groceries", done: false, priority: "medium" },
-    { id: 2, text: "Read a book", done: false, priority: "low" },
-    { id: 3, text: "Exercise for 30 minutes", done: true, priority: "high" },
-  ]);
+  const [todos, setTodos] = useState([]);
   const [newTodo, setNewTodo] = useState("");
   const [filter, setFilter] = useState("all");
+  const [loading, setLoading] = useState(true);
+
+  // ── Fetch todos on mount ──────────────────────────────────────────────────
+  useEffect(() => {
+    fetchTodos();
+  }, []);
+
+  const fetchTodos = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch(`${BACKEND_API}/todos`);
+      if (!res.ok) throw new Error("Failed to fetch todos");
+      const data = await res.json();
+      setTodos(data);
+    } catch (err) {
+      console.error("❌ Error fetching todos:", err);
+      setTodos([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // ── Give AI visibility into current todos ──────────────────────────────────
   useCopilotReadable({
@@ -39,9 +57,20 @@ function TodoApp() {
       { name: "priority", type: "string", description: "Priority: low, medium, or high", required: false },
     ],
     handler: async ({ text, priority = "medium" }) => {
-      const id = Date.now();
-      setTodos(prev => [...prev, { id, text, done: false, priority }]);
-      return `Added: "${text}" (${priority} priority, id=${id})`;
+      try {
+        const id = Date.now();
+        const res = await fetch(`${BACKEND_API}/todos`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, text, done: false, priority }),
+        });
+        if (!res.ok) throw new Error("Failed to add todo");
+        await fetchTodos();
+        return `Added: "${text}" (${priority} priority, id=${id})`;
+      } catch (err) {
+        console.error("❌ Error adding todo:", err);
+        return `Failed to add todo: ${err.message}`;
+      }
     },
   });
 
@@ -53,8 +82,19 @@ function TodoApp() {
       { name: "done", type: "boolean", description: "true = done", required: true },
     ],
     handler: async ({ id, done }) => {
-      setTodos(prev => prev.map(t => t.id === id ? { ...t, done } : t));
-      return `Todo #${id} marked as ${done ? "done ✓" : "undone ○"}`;
+      try {
+        const res = await fetch(`${BACKEND_API}/todos/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ done }),
+        });
+        if (!res.ok) throw new Error("Failed to update todo");
+        await fetchTodos();
+        return `Todo #${id} marked as ${done ? "done ✓" : "undone ○"}`;
+      } catch (err) {
+        console.error("❌ Error updating todo:", err);
+        return `Failed to update todo: ${err.message}`;
+      }
     },
   });
 
@@ -65,8 +105,17 @@ function TodoApp() {
       { name: "id", type: "number", description: "The todo item ID", required: true },
     ],
     handler: async ({ id }) => {
-      setTodos(prev => prev.filter(t => t.id !== id));
-      return `Deleted todo #${id}`;
+      try {
+        const res = await fetch(`${BACKEND_API}/todos/${id}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) throw new Error("Failed to delete todo");
+        await fetchTodos();
+        return `Deleted todo #${id}`;
+      } catch (err) {
+        console.error("❌ Error deleting todo:", err);
+        return `Failed to delete todo: ${err.message}`;
+      }
     },
   });
 
@@ -75,9 +124,19 @@ function TodoApp() {
     description: "Remove all completed todo items",
     parameters: [],
     handler: async () => {
-      const count = todos.filter(t => t.done).length;
-      setTodos(prev => prev.filter(t => !t.done));
-      return `Cleared ${count} completed todo(s)`;
+      try {
+        const count = todos.filter(t => t.done).length;
+        for (const todo of todos) {
+          if (todo.done) {
+            await fetch(`${BACKEND_API}/todos/${todo.id}`, { method: "DELETE" });
+          }
+        }
+        await fetchTodos();
+        return `Cleared ${count} completed todo(s)`;
+      } catch (err) {
+        console.error("❌ Error clearing completed:", err);
+        return `Failed to clear completed: ${err.message}`;
+      }
     },
   });
 
@@ -89,20 +148,67 @@ function TodoApp() {
       { name: "priority", type: "string", description: "low, medium, or high", required: true },
     ],
     handler: async ({ id, priority }) => {
-      setTodos(prev => prev.map(t => t.id === id ? { ...t, priority } : t));
-      return `Set todo #${id} priority to ${priority}`;
+      try {
+        const res = await fetch(`${BACKEND_API}/todos/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ priority }),
+        });
+        if (!res.ok) throw new Error("Failed to update priority");
+        await fetchTodos();
+        return `Set todo #${id} priority to ${priority}`;
+      } catch (err) {
+        console.error("❌ Error updating priority:", err);
+        return `Failed to update priority: ${err.message}`;
+      }
     },
   });
 
   // ── Local handlers ─────────────────────────────────────────────────────────
-  const addTodo = useCallback(() => {
+  const addTodo = useCallback(async () => {
     if (!newTodo.trim()) return;
-    setTodos(prev => [...prev, { id: Date.now(), text: newTodo.trim(), done: false, priority: "medium" }]);
-    setNewTodo("");
+    try {
+      const id = Date.now();
+      const res = await fetch(`${BACKEND_API}/todos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, text: newTodo.trim(), done: false, priority: "medium" }),
+      });
+      if (!res.ok) throw new Error("Failed to add todo");
+      setNewTodo("");
+      await fetchTodos();
+    } catch (err) {
+      console.error("❌ Error adding todo:", err);
+    }
   }, [newTodo]);
 
-  const toggleTodo = id => setTodos(prev => prev.map(t => t.id === id ? { ...t, done: !t.done } : t));
-  const deleteTodo = id => setTodos(prev => prev.filter(t => t.id !== id));
+  const toggleTodo = useCallback(async (id) => {
+    try {
+      const todo = todos.find(t => t.id === id);
+      if (!todo) return;
+      const res = await fetch(`${BACKEND_API}/todos/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ done: !todo.done }),
+      });
+      if (!res.ok) throw new Error("Failed to update todo");
+      await fetchTodos();
+    } catch (err) {
+      console.error("❌ Error updating todo:", err);
+    }
+  }, [todos]);
+
+  const deleteTodo = useCallback(async (id) => {
+    try {
+      const res = await fetch(`${BACKEND_API}/todos/${id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete todo");
+      await fetchTodos();
+    } catch (err) {
+      console.error("❌ Error deleting todo:", err);
+    }
+  }, []);
 
   const filtered = todos.filter(t =>
     filter === "active" ? !t.done : filter === "done" ? t.done : true
@@ -137,9 +243,12 @@ function TodoApp() {
             value={newTodo}
             onChange={e => setNewTodo(e.target.value)}
             onKeyDown={e => e.key === "Enter" && addTodo()}
+            disabled={loading}
           />
-          <button className="add-btn" onClick={addTodo}><span>+</span></button>
+          <button className="add-btn" onClick={addTodo} disabled={loading}><span>+</span></button>
         </div>
+
+        {loading && <div style={{ padding: "1rem", textAlign: "center", color: "#999" }}>⏳ Loading todos...</div>}
 
         <div className="filter-bar">
           {["all", "active", "done"].map(f => (
