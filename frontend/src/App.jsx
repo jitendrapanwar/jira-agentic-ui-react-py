@@ -1,9 +1,10 @@
 import { useState, useCallback, useEffect } from "react";
 import { CopilotKit } from "@copilotkit/react-core";
 import { CopilotSidebar } from "@copilotkit/react-ui";
-import { useCopilotReadable, useCopilotAction } from "@copilotkit/react-core";
+import { useCopilotReadable, useCopilotAction, useFrontendTool } from "@copilotkit/react-core";
 import "@copilotkit/react-ui/styles.css";
 import "./App.css";
+import { TodoCard, StatsCard, Stat, ConfirmCard } from "./Components";
 
 // ─── CopilotKit config ────────────────────────────────────────────────────────
 // Priority: Cloud key > Node runtime URL > error
@@ -49,7 +50,7 @@ function TodoApp() {
   });
 
   // ── AI Actions ────────────────────────────────────────────────────────────
-  useCopilotAction({
+  useFrontendTool({
     name: "addTodo",
     description: "Add a new todo item to the list",
     parameters: [
@@ -72,6 +73,10 @@ function TodoApp() {
         return `Failed to add todo: ${err.message}`;
       }
     },
+    render: ({ args, status }) => (
+      <TodoCard text={args.text} priority={args.priority} status={status} />
+    ),
+
   });
 
   useCopilotAction({
@@ -116,6 +121,29 @@ function TodoApp() {
         console.error("❌ Error deleting todo:", err);
         return `Failed to delete todo: ${err.message}`;
       }
+    },
+    render: ({ args, status }) => {
+      const todo = todos.find(t => t.id === args.id);
+      return (
+        <ConfirmCard
+          id={args.id}
+          text={todo?.text ?? `#${args.id}`}
+          status={status}
+          onConfirm={async (id) => {
+            try {
+              const res = await fetch(`${BACKEND_API}/todos/${id}`, {
+                method: "DELETE",
+              });
+              if (!res.ok) throw new Error("Failed to delete todo");
+              await fetchTodos();
+              return `Deleted todo #${id}`;
+            } catch (err) {
+              console.error("❌ Error deleting todo:", err);
+              return `Failed to delete todo: ${err.message}`;
+            }
+          }}
+        />
+      );
     },
   });
 
@@ -162,6 +190,15 @@ function TodoApp() {
         return `Failed to update priority: ${err.message}`;
       }
     },
+  });
+  useCopilotAction({
+    name: "getTodos",
+    description: "Show a stats summary of all todos",
+    parameters: [],
+    handler: async () => { },
+    render: ({ status }) => (
+      <StatsCard todos={todos} status={status} />
+    ),
   });
 
   // ── Local handlers ─────────────────────────────────────────────────────────

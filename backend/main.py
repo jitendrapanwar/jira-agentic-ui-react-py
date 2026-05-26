@@ -98,13 +98,11 @@ if not todos:
 async def get_todos():
     return todos
 
-
 @app.post("/todos")
 async def create_todo(todo: Todo):
     todos.append(todo.model_dump())
     save_todos_to_csv(todos)
     return todo
-
 
 @app.patch("/todos/{todo_id}")
 async def update_todo(todo_id: int, updates: dict):
